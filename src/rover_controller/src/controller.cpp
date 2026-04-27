@@ -1,5 +1,7 @@
 #include <rover_controller/controller.h>
 
+#include <cmath>
+
 namespace rover_controller
 {
 
@@ -19,44 +21,42 @@ namespace rover_controller
   {
     // setup ros connections
 
-    //#>>>>TODO: advertise a geometry_msgs::Twist to replace the previous keyboard topic
-    command_pub_ = //#>>>>TODO: advertise the topic
+    command_pub_ = nh.advertise<geometry_msgs::Twist>("/cmd_vel", 1);
 
-    field_pub_ = //#>>>>TODO: advertise a geometry_msgs::PoseArray with name "/field"
-    //#>>>> Hint: see http://docs.ros.org/en/lunar/api/geometry_msgs/html/msg/PoseArray.html
-
-    goal_sub_
+    // TODO exercise: publish geometry_msgs::PoseArray for RViz force-field visualization.
+    field_pub_ = nh.advertise<geometry_msgs::PoseArray>("/field", 1);
 
     goal_sub_ = nh.subscribe("/move_base_simple/goal", 1, 
-                             &Controller::/*#>>>>TODO: The NAME of the callback function*/,
+                             &Controller::goalCallback,
                              this);
 
-    //#>>>>TODO: Subscribe to the obstacles msg published by the package object_server                     
-    obstacles_sub_ = nh.subscribe(/*#>>>>TODO: The NAME of the command topic*/ 1, 
-                             &Controller::/*#>>>>TODO: The NAME of the callback function*/, this);
+    // TODO exercise: subscribe to obstacle positions from object_server.
+    obstacles_sub_ = nh.subscribe("/obstacles", 1, 
+                             &Controller::obstacleCallback, this);
 
     // get the parameters of this node (see config.yaml)
 
     std::vector<double> v;
     double d;
 
-    if(!ros::param::get(/*#>>>>TODO: PARAMETER NAME*/, v))
+    // TODO exercise: load controller gains from launch/config/config.yaml.
+    if(!ros::param::get("attractor_gain", v))
       return false;
     K_attractor_ = Eigen::Vector3d(v[0], v[1], v[2]).asDiagonal();
 
-    if(!ros::param::get(/*#>>>>TODO: PARAMETER NAME*/, d))
+    if(!ros::param::get("repulsive_gain", d))
       return false;
     k_repulsive_ = d;
 
-    if(!ros::param::get(/*#>>>>TODO: PARAMETER NAME*/, d))
+    if(!ros::param::get("lambda_repulsive", d))
       return false;
     lambda_repulsive_ = d;
   
-    if(!ros::param::get(/*#>>>>TODO: PARAMETER NAME*/, d))
+    if(!ros::param::get("vortex_gain", d))
       return false;
     k_vortex_ = d;
 
-    if(!ros::param::get(/*#>>>>TODO: PARAMETER NAME*/, d))
+    if(!ros::param::get("lambda_vortex", d))
       return false;
     lambda_vortex_ = d;
 
@@ -105,7 +105,7 @@ namespace rover_controller
     if(has_goal_)
     {
       // pull to goal
-      F += goalAttractorForce(goal_pos_w_, pos);
+      F += goalAttractorForce(goal, pos);
     }
 
     // avoid collision
@@ -120,10 +120,20 @@ namespace rover_controller
   Eigen::Vector3d Controller::goalAttractorForce(
     const Eigen::Vector3d& goal, const Eigen::Vector3d& pos)
   {
-    //#>>>>TODO: Implement the attractor force
-    //#>>>>Hint: Eigen offers function such as: norm(), normalize(), etc,...
+    // TODO exercise 6: implement the attractor force.
+    // Formula:
+    //   e = goal - pos                         if ||goal - pos|| <= 1
+    //   e = (goal - pos) / ||goal - pos||      otherwise
+    //   F_attractor = K_attractor * e
+    Eigen::Vector3d error = goal - pos;
 
-    return Eigen::Vector3d::Zero(); //#>>>>TODO: Replace
+    // Keep yaw error in [-pi, pi] so the rover turns the short way.
+    // error.z() = std::atan2(std::sin(error.z()), std::cos(error.z()));
+
+    if(error.norm() > 1.0)
+      error.normalize();
+
+    return K_attractor_ * error;
   }
 
   Eigen::Vector3d Controller::obstacleRepulsiveForce(
@@ -131,21 +141,26 @@ namespace rover_controller
   {
     Eigen::Vector3d force = Eigen::Vector3d::Zero();
 
-    // #>>>>TODO: Uncomment this part to implement the repulsive force
+    // TODO exercise 8: implement the repulsive force for every obstacle.
+    // For each obstacle:
+    //   v = (obstacle_position - rover_position) / ||obstacle_position - rover_position||
+    //   d = max(0, ||obstacle_position - rover_position|| - r_rover - r_obstacle)
+    //   f = k_repulsive * exp(-lambda_repulsive * d)
+    //   F_repulsive += -f * v
+    Eigen::Vector3d v;
+    for(size_t i = 0; i < obstacles.size(); ++i)
+    {
+      v << (obstacles[i].pos - pos).head(2), 0.0;
+      double v_norm = v.norm();
+      if(v_norm < 1e-6)
+        continue;
 
-    // Eigen::Vector3d v;
-    // double lambda = 20;
-    // for(size_t i = 0; i < obstacles.size(); ++i)
-    // {
-    //   v << //#>>>>TODO: 2d distance of obstacle and rover (note z component is zero!)
-    //   double v_norm = //#>>>>TODO: norm of v
-    //   double a = //#>>>>TODO: radius obstacle + radius rover
-    //   double d = std::max(0, /*#>>>>TODO: the surface distance rover obstacle*/);
-    //
-    //   double f = //#>>>>TODO: force magnitude
-    //
-    //   force -= //#>>>>TODO: add up the repulsive force vector for this obstacle
-    // }
+      double a = obstacles[i].radius + rover_radius_;
+      double d = std::max(0.0, v_norm - a);
+      double f = k_repulsive_*std::exp(-lambda_repulsive_*d);
+
+      force -= f * v.normalized();
+    }
     return force;
   }
 
@@ -154,43 +169,37 @@ namespace rover_controller
   {
     Eigen::Vector3d force = Eigen::Vector3d::Zero();
 
-    //#>>>>OPTIONAL: Uncomment this part to implement the vortex force
+    // TODO exercise 10 optional: add a curl/vortex force around obstacles.
+    // This helps when attraction and repulsion cancel each other and the rover gets stuck.
+    Eigen::Vector3d n_rover(std::cos(pos[2]), std::sin(pos[2]), 0.0);
 
-    // // get the heading vector of the rover
-    // Eigen::Vector3d n_rover(std::sin(pos[2]), std::cos(pos[2]), 0.0);
+    Eigen::Vector3d v;
+    Eigen::Matrix3d R = Eigen::Matrix3d::Identity();
 
-    // Eigen::Vector3d v;
-    // Eigen::Matrix3d R = Eigen::Matrix3d::Identity();
+    for(size_t i = 0; i < obstacles.size(); ++i)
+    {
+      v << (obstacles[i].pos - pos).head(2), 0.0;
+      double v_norm = v.norm();
+      if(v_norm < 1e-6)
+        continue;
 
-    // for(size_t i = 0; i < obstacles.size(); ++i)
-    // {
-    //   // get the vector rover to obstacle 
-    //   v << (obstacles[i].pos - pos).head(2), 0;
-    //   Eigen::Vector3d n_obs = v.normalized();
+      Eigen::Vector3d n_obs = v.normalized();
 
-    //   // the sign of the dot product between obstacle vector and heading
-    //   // tells us if an object is to the right or to the left
-    //   double alpha = n_rover.dot(n_obs);
-    //   if(alpha < 0)
-    //   { 
-    //     //#>>>>TODO: set the upper left 2x2 corner of the rotation matrix R
-    //     //#>>>>TODO: to create - pi/2 = - 90 degree rotation
-    //     R.topLeftCorner(2,2) = //#>>>>TODO: 
-    //   }
-    //   else
-    //   {
-    //     //#>>>>TODO: set the upper left 2x2 corner of the rotation matrix R
-    //     //#>>>>TODO: to create + pi/2 = + 90 degree rotation
-    //     R.topLeftCorner(2,2) = //#>>>>TODO: 
-    //   }
+      double alpha = n_rover.dot(n_obs);
+      if(alpha < 0)
+      {
+        R.topLeftCorner(2,2) = Eigen::Rotation2Dd(-M_PI/2.0).matrix();
+      }
+      else
+      {
+        R.topLeftCorner(2,2) = Eigen::Rotation2Dd(M_PI/2.0).matrix();
+      }
 
-    //   // compute vortex field
-    //   double v_norm = v.norm();
-    //   double a = obstacles[i].radius + rover_radius_;
-    //   double d = std::max(0.0, d - a);
-    //   double f = k_vortex_*std::exp(-lambda_vortex_*d);
-    //   force -= f * R * v.normalized();
-    // }
+      double a = obstacles[i].radius + rover_radius_;
+      double d = std::max(0.0, v_norm - a);
+      double f = k_vortex_*std::exp(-lambda_vortex_*d);
+      force -= f * R * n_obs;
+    }
     return force;
   }
 
@@ -262,9 +271,11 @@ namespace rover_controller
     
     tf::StampedTransform transform;
     try {
+      // TODO exercise 4: use TF listener to get the rover frame with respect to map.
+      // lookupTransform(target, source, time, transform) returns source in target.
       listener_.lookupTransform(
-        /*#>>>>TODO: the target frame name*/
-        /*#>>>>TODO: the source frame name*/, ros::Time(0), transform);
+        map_frame_,
+        rover_frame_, ros::Time(0), transform);
 
       //#>>>> Hint: http://wiki.ros.org/tf/Tutorials/Writing%20a%20tf%20listener%20%28C%2B%2B%29
       //#>>>> Hint: lookupTransform() gives the transformation source with respect to target
@@ -299,22 +310,24 @@ namespace rover_controller
     // note: the goal is given in the map frame and should be stored in the 
     // member variable goal_pos_w_ = [pos_x, pos_y, theta] \in R^3
 
+    // TODO exercise 3: copy goal position and yaw from geometry_msgs::PoseStamped.
     has_goal_ = true;
-    goal_pos_w_.x() = //#>>>>TODO: get the x position
-    goal_pos_w_.y() = //#>>>>TODO: get the y position
-    //Hint: http://docs.ros.org/en/noetic/api/geometry_msgs/html/msg/PoseStamped.html
+    goal_pos_w_.x() = msg->pose.position.x;
+    goal_pos_w_.y() = msg->pose.position.y;
 
+    // Quaternion constructor order in Eigen is (w, x, y, z).
     Eigen::Quaterniond Q_b_w(
-      /*#>>>>TODO: create a Quaternion(w,x,y,z) from the orientation part of the message*/);
-    // Hint: https://eigen.tuxfamily.org/dox/classEigen_1_1Quaternion.html
+      msg->pose.orientation.w,
+      msg->pose.orientation.x,
+      msg->pose.orientation.y,
+      msg->pose.orientation.z);
 
     // Next we use Eigen to convert the Quaternion into a RotationMatrix and 
     // extract the theta angle from its upper 2x2 part
     Eigen::Matrix2d M = Q_b_w.toRotationMatrix().topLeftCorner(2,2);
     goal_pos_w_.z() = Eigen::Rotation2Dd(M).angle();
 
-    // print the new goal
-    //#>>>>TODO: Print the goal vector in the console
+    ROS_INFO_STREAM("New goal: " << goal_pos_w_.transpose());
   }
 
   void Controller::obstacleCallback(const object_msgs::ObjectsConstPtr& msg)
@@ -326,11 +339,14 @@ namespace rover_controller
     // Hint: The message obstacle is defined by me inside the package:
     // utilites/object_msgs/msg/Object.msg
 
+    // TODO exercise 3: copy all obstacle positions and radii into obstacles_.
     obstacles_.resize(msg->objects.size());
     for(size_t i = 0; i < msg->objects.size(); ++i)
     {
-      obstacles_[i].pos << //#>>>>TODO: Save the 3d position
-      obstacles_[i].radius = //#>>>>TODO: Save the radius
+      obstacles_[i].pos << msg->objects[i].pose.position.x,
+                           msg->objects[i].pose.position.y,
+                           msg->objects[i].pose.position.z;
+      obstacles_[i].radius = msg->objects[i].radius.data;
     }
   }
 

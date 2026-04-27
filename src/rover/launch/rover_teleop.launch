@@ -1,26 +1,11 @@
 <?xml version="1.0"?>
 <launch>
-  
-  <!-- 加载参数 -->
-  <rosparam file="$(find rover)/launch/config.yaml" / command="load">
 
-  <!-- 启动 rover_node -->
-  <node name="rover_node" pkg="rover" type="rover_node" />
+  <rosparam file="$(find rover)/launch/config/config.yaml" command="load"/>
 
-  <!-- 启动键盘控制 -->
-  <node name="teleop" pkg="key_teleop" type="key_teleop.py"/ >
+  <node name="rover_node" pkg="rover" type="rover_node"/>
+
+  <!-- <node name="key_teleop" pkg="key_teleop" type="key_teleop.py" /> -->
+  <node name="teleop" pkg="teleop_twist_keyboard" type="teleop_twist_keyboard.py" />
 
 </launch>
-<!-- <?xml version="1.0"?>
-<launch>
-  
-  <!--#>>>>TODO: load the config.yaml gains for M,D,F into the parameter server -->
-  <rosparam file="TODO" />
-
-  <!--#>>>>TODO: execute the rover_node node -->
-  <node name="TODO" pkg="TODO" type="TODO"/>
-  
-  <!--#>>>>TODO: execute key_teleop.py -->
-  <node name="TODO" pkg="TODO" type="TODO"/>
-
-</launch> -->
